@@ -20,14 +20,30 @@ class Seq2SeqTransformer:
             self.decoder.embedding,
             self.decoder.fc_out,
         ]
-        for layer in self.encoder.layers + self.decoder.layers:
-            self.params.extend([
-                layer.self_attn.W_q,
-                layer.self_attn.W_k,
-                layer.self_attn.W_v,
-                layer.self_attn.W_o,
-                getattr(layer, "cross_attn", layer.self_attn).W_q,
-            ])
+        for layer in self.encoder.layers:
+            self.params.extend(
+                [
+                    layer.self_attn.W_q,
+                    layer.self_attn.W_k,
+                    layer.self_attn.W_v,
+                    layer.self_attn.W_o,
+                    layer.self_attn.W_q,  # placeholder for cross-attention
+                ]
+            )
+
+        for layer in self.decoder.layers:
+            self.params.extend(
+                [
+                    layer.self_attn.W_q,
+                    layer.self_attn.W_k,
+                    layer.self_attn.W_v,
+                    layer.self_attn.W_o,
+                    layer.cross_attn.W_q,
+                    layer.cross_attn.W_k,
+                    layer.cross_attn.W_v,
+                    layer.cross_attn.W_o,
+                ]
+            )
 
     def encode(self, src_ids: np.ndarray, src_mask: Optional[np.ndarray]) -> np.ndarray:
         return self.encoder(src_ids, src_mask)
