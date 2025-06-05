@@ -14,16 +14,19 @@ from .utils import Config, Logger, create_look_ahead_mask, create_padding_mask, 
 
 def compute_loss(logits: np.ndarray, target_ids: np.ndarray, pad_id: int = 0, smoothing: float = 0.0) -> float:
     probs = softmax(logits)
-    vocab = probs.shape[-1]
+    log_probs = np.log(probs + 1e-9)
+    vocab = log_probs.shape[-1]
     smooth = smoothing / (vocab - 1) if smoothing > 0 else 0.0
-    losses = []
-    for b in range(logits.shape[0]):
-        for t in range(logits.shape[1]):
-            if target_ids[b, t] != pad_id:
-                true_prob = 1.0 - smoothing
-                loss = -(true_prob * np.log(probs[b, t, target_ids[b, t]] + 1e-9) + smooth * np.sum(np.log(probs[b, t] + 1e-9)))
-                losses.append(loss)
-    return float(np.mean(losses))
+
+    b_range = np.arange(log_probs.shape[0])[:, None]
+    t_range = np.arange(log_probs.shape[1])[None, :]
+    log_probs_target = log_probs[b_range, t_range, target_ids]
+    sum_log_probs = np.sum(log_probs, axis=-1)
+
+    loss = -((1.0 - smoothing) * log_probs_target + smooth * sum_log_probs)
+    mask = (target_ids != pad_id)
+    masked_loss = loss * mask
+    return float(masked_loss.sum() / max(mask.sum(), 1))
 
 
 def softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
