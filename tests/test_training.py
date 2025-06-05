@@ -1,10 +1,10 @@
 import sys, os; sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import os
-import numpy as np
-from src.train import create_batches, train_epoch, save_checkpoint
+import torch
+from torch.utils.data import DataLoader
+from src.train import ChatDataset, train_epoch, save_checkpoint
 from src.tokenizer import Tokenizer
 from src.model import Seq2SeqTransformer
-from src.optimizer import AdamOptimizer
 from src.utils import Config, Logger
 
 
@@ -14,10 +14,12 @@ def test_training_integration(tmp_path):
     data = [{"input": "Hallo", "response": "Welt"}]
     tokenizer = Tokenizer()
     tokenizer.build_vocab_from_texts(["Hallo", "Welt"])
-    batches = create_batches(data, tokenizer, cfg)
+    dataset = ChatDataset(data, tokenizer, cfg)
+    loader = DataLoader(dataset, batch_size=1)
     model = Seq2SeqTransformer(cfg)
-    opt = AdamOptimizer(model.params, lr=cfg.learning_rate)
+    opt = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    crit = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.token_to_id["<pad>"])
     logger = Logger("/tmp/log.txt")
-    train_epoch(model, batches, opt, cfg, logger, 0)
+    train_epoch(model, loader, opt, crit, logger, 0)
     save_checkpoint(model, opt, 0, cfg)
-    assert os.path.exists(os.path.join(cfg.checkpoint_dir, "checkpoint_epoch_0.npz"))
+    assert os.path.exists(os.path.join(cfg.checkpoint_dir, "checkpoint_epoch_0.pt"))

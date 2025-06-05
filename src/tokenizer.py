@@ -25,17 +25,30 @@ class Tokenizer:
         """Split text on whitespace."""
         return text.replace("\t", " ").strip().split()
 
-    def encode(self, text: str, max_len: int) -> np.ndarray:
-        """Convert text to a sequence of token ids."""
+    def encode(self, text: str, max_len: int, as_tensor: bool = False):
+        """Convert text to a sequence of token ids.
+
+        Args:
+            text: Input string.
+            max_len: Desired sequence length.
+            as_tensor: If ``True`` return a torch tensor instead of ``numpy``.
+        """
         tokens = ["<bos>"] + self.tokenize(text) + ["<eos>"]
         ids = [self.token_to_id.get(t, self.token_to_id["<pad>"]) for t in tokens]
         if len(ids) < max_len:
             ids += [self.token_to_id["<pad>"]] * (max_len - len(ids))
         else:
             ids = ids[:max_len]
-        return np.array(ids, dtype=np.int32)
+        arr = np.array(ids, dtype=np.int64)
+        if as_tensor:
+            import torch
+
+            return torch.tensor(arr, dtype=torch.long)
+        return arr
 
     def decode(self, ids: List[int]) -> str:
         """Convert ids back to a text string."""
-        tokens = [self.id_to_token.get(i, "") for i in ids if i != self.token_to_id["<pad>"]]
+        if not isinstance(ids, list):
+            ids = list(ids)
+        tokens = [self.id_to_token.get(int(i), "") for i in ids if i != self.token_to_id["<pad>"]]
         return " ".join(tokens)

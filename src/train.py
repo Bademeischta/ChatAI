@@ -1,87 +1,102 @@
+"""Training and CLI entry point using PyTorch."""
+
 from __future__ import annotations
 
 import argparse
 import os
-from typing import Iterator, List
+from typing import List
 
-import numpy as np
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
 
-from .model import Seq2SeqTransformer
-from .optimizer import AdamOptimizer
+from .model import Seq2SeqTransformer, greedy_decode
 from .tokenizer import Tokenizer
-from .utils import Config, Logger, create_look_ahead_mask, create_padding_mask, load_jsonl, tqdm
+from .utils import Config, Logger, load_jsonl, tqdm
 
 
-def compute_loss(logits: np.ndarray, target_ids: np.ndarray, pad_id: int = 0, smoothing: float = 0.0) -> float:
-    probs = softmax(logits)
-    vocab = probs.shape[-1]
-    smooth = smoothing / (vocab - 1) if smoothing > 0 else 0.0
-    losses = []
-    for b in range(logits.shape[0]):
-        for t in range(logits.shape[1]):
-            if target_ids[b, t] != pad_id:
-                true_prob = 1.0 - smoothing
-                loss = -(true_prob * np.log(probs[b, t, target_ids[b, t]] + 1e-9) + smooth * np.sum(np.log(probs[b, t] + 1e-9)))
-                losses.append(loss)
-    return float(np.mean(losses))
+class ChatDataset(Dataset):
+    """Dataset that returns encoded input and target sequences."""
+
+    def __init__(self, data: List[dict], tokenizer: Tokenizer, config: Config) -> None:
+        self.samples = []
+        for d in data:
+            src = tokenizer.encode(d["input"], config.max_seq_len, as_tensor=True)
+            tgt = tokenizer.encode(d["response"], config.max_seq_len, as_tensor=True)
+            self.samples.append((src, tgt))
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        return self.samples[idx]
 
 
-def softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
-    e_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
-    return e_x / e_x.sum(axis=axis, keepdims=True)
+def train_epoch(
+    model: Seq2SeqTransformer,
+    dataloader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.CrossEntropyLoss,
+    logger: Logger,
+    epoch_id: int,
+) -> None:
+    model.train()
+    for src, tgt in tqdm(dataloader, desc=f"Epoch {epoch_id}"):
+        optimizer.zero_grad()
+        logits = model(src, tgt[:, :-1])
+        loss = criterion(logits.reshape(-1, logits.size(-1)), tgt[:, 1:].reshape(-1))
+        loss.backward()
+        optimizer.step()
+        logger.log(f"Epoch {epoch_id}\tLoss {loss.item():.4f}")
 
 
-def compute_grads(loss: float, params: List[np.ndarray]) -> List[np.ndarray]:
-    # Placeholder for autograd; returns zero gradients
-    return [np.zeros_like(p) for p in params]
-
-
-def train_epoch(model: Seq2SeqTransformer, data: List[dict], optimizer: AdamOptimizer, config: Config, logger: Logger, epoch_id: int) -> None:
-    for batch in tqdm(data, desc=f"Epoch {epoch_id}"):
-        logits = model.forward(batch["input_ids"], batch["target_ids"], None, None)
-        loss = compute_loss(logits, batch["target_ids"], smoothing=config.label_smoothing)
-        grads = compute_grads(loss, model.params)
-        optimizer.step(grads)
-        logger.log(f"Epoch {epoch_id}\tLoss {loss:.4f}")
-
-
-def save_checkpoint(model: Seq2SeqTransformer, optimizer: AdamOptimizer, epoch: int, config: Config) -> None:
+def save_checkpoint(model: Seq2SeqTransformer, optimizer: torch.optim.Optimizer, epoch: int, config: Config) -> None:
     os.makedirs(config.checkpoint_dir, exist_ok=True)
-    path = os.path.join(config.checkpoint_dir, f"checkpoint_epoch_{epoch}.npz")
-    np.savez(path, **{f"param_{i}": p for i, p in enumerate(model.params)}, t=optimizer.t)
-
-def create_batches(data: List[dict], tokenizer: Tokenizer, config: Config) -> List[dict]:
-    batches = []
-    for d in data:
-        batches.append({
-            "input_ids": tokenizer.encode(d["input"], config.max_seq_len)[None, :],
-            "target_ids": tokenizer.encode(d["response"], config.max_seq_len)[None, :],
-        })
-    return batches
+    path = os.path.join(config.checkpoint_dir, f"checkpoint_epoch_{epoch}.pt")
+    torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict()}, path)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ChatAI Trainer")
     parser.add_argument("--mode", choices=["train", "chat"], required=True)
     parser.add_argument("--config_file", default="config.json")
+    parser.add_argument("--checkpoint", type=str)
     args = parser.parse_args()
 
     config = Config.from_json(args.config_file)
     logger = Logger("training.log")
     tokenizer = Tokenizer()
 
+    model = Seq2SeqTransformer(config)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.token_to_id["<pad>"])
+
+    if args.checkpoint and os.path.exists(args.checkpoint):
+        ckpt = torch.load(args.checkpoint, map_location="cpu")
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+
     if args.mode == "train":
         train_data = load_jsonl(config.train_file)
         texts = [d["input"] for d in train_data] + [d["response"] for d in train_data]
         tokenizer.build_vocab_from_texts(texts)
-        batches = create_batches(train_data, tokenizer, config)
-        model = Seq2SeqTransformer(config)
-        optimizer = AdamOptimizer(model.params, lr=config.learning_rate)
-        train_epoch(model, batches, optimizer, config, logger, epoch_id=1)
+        dataset = ChatDataset(train_data, tokenizer, config)
+        dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+        train_epoch(model, dataloader, optimizer, criterion, logger, epoch_id=1)
         save_checkpoint(model, optimizer, 1, config)
-    elif args.mode == "chat":
-        print("Chat mode not fully implemented.")
+    else:  # chat mode
+        if not args.checkpoint:
+            raise SystemExit("--checkpoint required for chat mode")
+        model.eval()
+        while True:
+            user_input = input("User: ")
+            if user_input.strip().lower() == "exit":
+                break
+            src = tokenizer.encode(user_input, config.max_seq_len, as_tensor=True).unsqueeze(0)
+            response = greedy_decode(model, src, tokenizer, config.max_seq_len)
+            print(f"Bot: {response}")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
+

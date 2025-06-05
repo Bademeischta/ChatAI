@@ -1,6 +1,6 @@
 # ChatAI from Scratch
 
-Dieses Projekt demonstriert einen einfachen Transformer-Chatbot, implementiert ausschließlich mit NumPy. Der Code ist in mehrere Module unter `src/` aufgeteilt und soll zum Lernen der Kernkonzepte eines Seq2Seq-Transformers dienen.
+Dieses Projekt demonstriert einen kleinen Transformer-Chatbot. Der Trainingscode nutzt nun PyTorch, um echte Gradientenberechnungen und Optimierung zu ermöglichen. Die Module unter `src/` dienen als einfache Lernbasis.
 
 ## Struktur
 
@@ -37,7 +37,7 @@ Die Daten liegen im JSONL-Format vor. Eine Vorlage befindet sich in `data/exampl
 python src/train.py --mode train --config_file config.json
 ```
 
-Danach wird ein Checkpoint unter `checkpoints/` erzeugt. Zum Chatten (rudimentär):
+Nach dem Training entsteht ein Checkpoint unter `checkpoints/` (Datei `.pt`). Zum einfachen Chatten:
 
 ```bash
 python src/train.py --mode chat --config_file config.json

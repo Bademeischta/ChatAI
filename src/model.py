@@ -1,41 +1,74 @@
+"""PyTorch-based Seq2Seq Transformer model."""
+
 from __future__ import annotations
 
 from typing import Optional
 
-import numpy as np
+import torch
+from torch import nn
 
-from .transformer import Decoder, Encoder, positional_encoding
-from .utils import Config, create_look_ahead_mask, create_padding_mask
+from .utils import Config
 
 
-class Seq2SeqTransformer:
-    """Minimal Seq2Seq Transformer model."""
+class Seq2SeqTransformer(nn.Module):
+    """Minimal wrapper around ``nn.Transformer`` for sequence generation."""
 
     def __init__(self, config: Config) -> None:
+        super().__init__()
         self.config = config
-        self.encoder = Encoder(config)
-        self.decoder = Decoder(config)
-        self.params = [
-            self.encoder.embedding,
-            self.decoder.embedding,
-            self.decoder.fc_out,
-        ]
-        for layer in self.encoder.layers + self.decoder.layers:
-            self.params.extend([
-                layer.self_attn.W_q,
-                layer.self_attn.W_k,
-                layer.self_attn.W_v,
-                layer.self_attn.W_o,
-                getattr(layer, "cross_attn", layer.self_attn).W_q,
-            ])
+        self.embedding = nn.Embedding(config.vocab_size, config.embedding_dim)
+        self.transformer = nn.Transformer(
+            d_model=config.embedding_dim,
+            nhead=config.num_heads,
+            num_encoder_layers=config.num_encoder_layers,
+            num_decoder_layers=config.num_decoder_layers,
+            dim_feedforward=config.ffn_dim,
+            dropout=config.dropout_rate,
+            batch_first=True,
+        )
+        self.output_proj = nn.Linear(config.embedding_dim, config.vocab_size)
 
-    def encode(self, src_ids: np.ndarray, src_mask: Optional[np.ndarray]) -> np.ndarray:
-        return self.encoder(src_ids, src_mask)
+    def forward(
+        self,
+        src: torch.Tensor,
+        tgt: torch.Tensor,
+        src_padding_mask: Optional[torch.Tensor] = None,
+        tgt_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute logits for a batch."""
 
-    def decode(self, tgt_ids: np.ndarray, enc_out: np.ndarray, look_ahead_mask: Optional[np.ndarray], padding_mask: Optional[np.ndarray]) -> np.ndarray:
-        return self.decoder(tgt_ids, enc_out, look_ahead_mask, padding_mask)
+        src_emb = self.embedding(src)
+        tgt_emb = self.embedding(tgt)
 
-    def forward(self, src_ids: np.ndarray, tgt_ids: np.ndarray, src_mask: Optional[np.ndarray], tgt_mask: Optional[np.ndarray]) -> np.ndarray:
-        enc_out = self.encode(src_ids, src_mask)
-        logits = self.decode(tgt_ids, enc_out, tgt_mask, src_mask)
-        return logits
+        tgt_mask = self.transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
+
+        out = self.transformer(
+            src_emb,
+            tgt_emb,
+            src_key_padding_mask=src_padding_mask,
+            tgt_key_padding_mask=tgt_padding_mask,
+            memory_key_padding_mask=src_padding_mask,
+            tgt_mask=tgt_mask,
+        )
+        return self.output_proj(out)
+
+
+def greedy_decode(
+    model: Seq2SeqTransformer, src: torch.Tensor, tokenizer, max_len: int
+) -> str:
+    model.eval()
+    device = src.device
+    src_padding = (src == tokenizer.token_to_id["<pad>"])
+    memory = model.forward(src, src, src_padding_mask=src_padding, tgt_padding_mask=src_padding)
+
+    ys = torch.full((1, 1), tokenizer.token_to_id["<bos>"], dtype=torch.long, device=device)
+    for _ in range(max_len - 1):
+        tgt_mask = model.transformer.generate_square_subsequent_mask(ys.size(1)).to(device)
+        out = model.forward(src, ys, src_padding_mask=src_padding, tgt_padding_mask=None)
+        prob = out[:, -1, :].softmax(dim=-1)
+        next_word = int(prob.argmax(dim=-1))
+        ys = torch.cat([ys, torch.tensor([[next_word]], device=device)], dim=1)
+        if next_word == tokenizer.token_to_id["<eos>"]:
+            break
+    return tokenizer.decode(ys[0].cpu().tolist())
+
