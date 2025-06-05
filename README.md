@@ -21,6 +21,8 @@ Unter `tests/` befinden sich ein paar Unit-Tests für Tokenizer, Transformer und
 
 ```bash
 pip install -r requirements.txt
+# falls keine GPU vorhanden ist
+pip install torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ## Beispiel-Daten

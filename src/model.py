@@ -58,17 +58,32 @@ def greedy_decode(
 ) -> str:
     model.eval()
     device = src.device
-    src_padding = (src == tokenizer.token_to_id["<pad>"])
-    memory = model.forward(src, src, src_padding_mask=src_padding, tgt_padding_mask=src_padding)
+    src_padding = src == tokenizer.token_to_id["<pad>"]
 
-    ys = torch.full((1, 1), tokenizer.token_to_id["<bos>"], dtype=torch.long, device=device)
-    for _ in range(max_len - 1):
-        tgt_mask = model.transformer.generate_square_subsequent_mask(ys.size(1)).to(device)
-        out = model.forward(src, ys, src_padding_mask=src_padding, tgt_padding_mask=None)
-        prob = out[:, -1, :].softmax(dim=-1)
-        next_word = int(prob.argmax(dim=-1))
-        ys = torch.cat([ys, torch.tensor([[next_word]], device=device)], dim=1)
-        if next_word == tokenizer.token_to_id["<eos>"]:
-            break
+    with torch.no_grad():
+        # Encode source only once
+        src_emb = model.embedding(src)
+        memory = model.transformer.encoder(
+            src_emb, src_key_padding_mask=src_padding
+        )
+
+        ys = torch.full(
+            (1, 1), tokenizer.token_to_id["<bos>"], dtype=torch.long, device=device
+        )
+        for _ in range(max_len - 1):
+            tgt_emb = model.embedding(ys)
+            tgt_mask = model.transformer.generate_square_subsequent_mask(ys.size(1)).to(device)
+            out = model.transformer.decoder(
+                tgt_emb,
+                memory,
+                tgt_mask=tgt_mask,
+                memory_key_padding_mask=src_padding,
+            )
+            out = model.output_proj(out)
+            prob = out[:, -1, :].softmax(dim=-1)
+            next_word = int(prob.argmax(dim=-1))
+            ys = torch.cat([ys, torch.tensor([[next_word]], device=device)], dim=1)
+            if next_word == tokenizer.token_to_id["<eos>"]:
+                break
     return tokenizer.decode(ys[0].cpu().tolist())
 
