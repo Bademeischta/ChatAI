@@ -1,69 +1,53 @@
 # ChatAI from Scratch
 
-Dieses Repository demonstriert, wie man einen einfachen Transformer-Chatbot **komplett ohne Deep-Learning-Frameworks** nur mit NumPy implementiert. Zielgruppe sind Studierende und Entwickler, die die Konzepte eines Seq2Seq-Transformers ohne "Magie" verstehen möchten.
+Dieses Projekt demonstriert einen einfachen Transformer-Chatbot, implementiert ausschließlich mit NumPy. Der Code ist in mehrere Module unter `src/` aufgeteilt und soll zum Lernen der Kernkonzepte eines Seq2Seq-Transformers dienen.
 
-Das Skript `src/chatbot_from_scratch.py` zeigt Schritt für Schritt:
+## Struktur
 
-1. **Vokabular-Erstellung** mit einer eigenen `Tokenizer`-Klasse.
-2. **Transformer-Blöcke** (Multi-Head Attention, Feed-Forward, LayerNorm).
-3. **Seq2Seq-Modell** aus Encoder und Decoder.
-4. **Trainingsloop** inklusive eines einfachen Adam-Optimizers.
-
-## Eingabedaten
-
-Die Trainingsdaten werden im JSONL-Format erwartet. Jede Zeile enthält ein JSON-Objekt mit den Feldern `input` und `response`:
-
-```jsonl
-{"input": "Hallo, wie geht's?", "response": "Mir geht's gut."}
+```
+src/
+  tokenizer.py      # Tokenisierung und Vokabular
+  transformer.py    # Transformer-Bausteine (Attention, FFN, LayerNorm)
+  model.py          # Seq2SeqTransformer
+  optimizer.py      # Einfacher Adam-Optimizer
+  train.py          # Training und einfache CLI
+  inference.py      # Greedy-Decoder
+  utils.py          # Hilfsfunktionen und Config-Klasse
 ```
 
-Eine Vorlage findest du unter `data/example_template.jsonl`.
-
-Beim ersten Start erzeugt das Skript automatisch Dateien wie `vocab_token2id.npy`, `vocab_id2token.npy` und legt trainierte Gewichte in `checkpoints/` ab.
+Unter `tests/` befinden sich ein paar Unit-Tests für Tokenizer, Transformer und Optimizer.
 
 ## Installation
-
-Python 3.8 oder höher wird benötigt. Installiere die Abhängigkeiten mit:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-`numpy` ist zwingend erforderlich, `tqdm` wird optional für Fortschrittsbalken genutzt.
+## Beispiel-Daten
 
-## Verzeichnisstruktur (Beispiel)
+Die Daten liegen im JSONL-Format vor. Eine Vorlage befindet sich in `data/example_template.jsonl`:
 
-```
-.
-├── src/
-│   └── chatbot_from_scratch.py
-├── data/
-│   └── example_template.jsonl
-├── checkpoints/
-├── requirements.txt
-└── README.md
+```jsonl
+{"input": "Hier steht eine Beispiel-Eingabe.", "response": "Hier steht eine Beispiel-Antwort."}
 ```
 
-Während des Trainings werden automatisch `vocab_token2id.npy`, `vocab_id2token.npy` und Dateien wie `checkpoints/epoch_1.npz` erzeugt.
-
-## Kurzer Einstieg
-
-Trainieren des Modells:
+## Erstes Training
 
 ```bash
-python src/chatbot_from_scratch.py --mode train --train_file data/train.jsonl --valid_file data/valid.jsonl --epochs 10 --batch_size 32 --lr 1e-4
+python src/train.py --mode train --config_file config.json
 ```
 
-Nach dem Training kann der Chat-Modus gestartet werden:
+Danach wird ein Checkpoint unter `checkpoints/` erzeugt. Zum Chatten (rudimentär):
 
 ```bash
-python src/chatbot_from_scratch.py --mode chat --checkpoint_dir checkpoints/
+python src/train.py --mode chat --config_file config.json
 ```
 
-## Was fehlt noch und mögliche Erweiterungen
+Weitere Einstellungen können über `config.json` vorgenommen werden (z.B. `beam_width`, `top_k`, `top_p`).
 
-- Dropout und Label-Smoothing sind bewusst minimal gehalten und könnten verbessert werden.
-- Logging und Visualisierung (z.B. TensorBoard) fehlen.
-- Beam-Search-Parameter lassen sich erweitern, ebenso Top-k und Top-p Sampling.
+## Roadmap
 
-Viel Spaß beim Experimentieren! 🚀
+- Ausarbeitung von Beam-Search und Sampling
+- GPU-Unterstützung via CuPy
+- Bessere Logging-Optionen
+- Unit-Tests erweitern und automatische Gradientenberechnung
